@@ -1,0 +1,12 @@
+HTTP/1.1 200 OK
+Content-Length: 130
+
+<html>
+<body>
+<h1>CS2105: Demo</h1>
+<p>
+I am a Web page.
+</p>
+<img alt="a test image that exists" src="doge.jpg">
+</body>
+</html>
