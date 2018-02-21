@@ -40,14 +40,15 @@ public class WebServer {
 
       while (true) {  // keep server alive
         // "Poll" for socket connection (accept all connection requests)
+        System.out.println("Waiting to accept socket connection...");
         Socket connectionSocket = sSocket.accept();
-        this.handleClientSocket(connectionSocket);
+        System.out.println("Socket connection established. Handling socket connection ... ");
+        // Boolean isHttp10 =
+        this.handleClientSocket(connectionSocket); 
+        System.out.println("Finished handling socket connection.");
+        // if( isHttp10 )
 
       }
-
-
-
-
       // Please DO NOT copy from the Internet (or anywhere else)
       // Instead, if you see nice code somewhere try to understand it.
       //
@@ -92,6 +93,9 @@ public class WebServer {
       
     }
 
+
+
+
     /**
      * Handles requests sent by a client
      * @param  client Socket that handles the client connection
@@ -118,11 +122,26 @@ public class WebServer {
       // initialize a new httpRequest 
       HttpRequest httpRequest = new HttpRequest(bReader);
 
-      byte[] response = formHttpResponse(httpRequest);
-      System.out.println("Finished forming http response");
+      if( httpRequest.getIsHttp10() ){
+        byte[] response = formHttpResponse(httpRequest);
+        System.out.println("Finished forming http response");
+        sendHttpResponse( client, response);
+        client.close();
+      } else {
+        do {
+          // TODO: send asynchronously with new thread.
+          byte[] response = formHttpResponse(httpRequest);
+          if( response == null ){
+            System.out.println( "Something went wrong, either the request requested an "
+              + "invalid resource or we couldn't form the response" );
+            break;
+          }
 
-      sendHttpResponse( client, response);
-
+          System.out.println("Finished forming http response");
+          sendHttpResponse( client, response);
+        } while( (httpRequest = new HttpRequest(bReader)).getIsValid() );
+        client.close();
+      }
     }
 
     /**
@@ -131,15 +150,12 @@ public class WebServer {
      * @param  response the response that should be send to the client
      */
     private void sendHttpResponse(Socket client, byte[] response) throws IOException {
-      // NEEDS IMPLEMENTATION
       // get output stream of client connection's socket
-      System.out.print("Sending httpResponse w/ bytes:" + new String(response) );
+      System.out.println("Sending httpResponse w/ bytes:\n" + new String(response) );
       OutputStream clientSocketOutputStream = client.getOutputStream();
       int bytesRead = response.length;
       clientSocketOutputStream.write( response );
-      System.out.print( "Wrote " + bytesRead + " bytes to client connetion output socket." );
-
-
+      System.out.println( "Wrote " + bytesRead + " bytes to client connetion output socket." );
     }
 
     /**
@@ -157,31 +173,38 @@ public class WebServer {
       // but it is possible to solve this in multiple different ways.
       System.out.println("Forming Http response for request at " + request.getFilePath() );
 
-      // buffer for file specified in request.filePath
-      //  ======================= IO handling ======================= //
-      String filePath = request.getFilePath();
-      byte[] encoded = Files.readAllBytes(Paths.get(filePath));
-      int contentLength = encoded.length;
+      try {
+        // buffer for file specified in request.filePath
+        //  ======================= IO handling ======================= //
+        String filePath = request.getFilePath();
+        byte[] encoded = Files.readAllBytes(Paths.get(filePath));
+        int contentLength = encoded.length;
 
-      // Might be bad practice because of encoding issues
-      String fileContent = new String(encoded);
+        // Might be bad practice because of encoding issues
+        String fileContent = new String(encoded);
 
 
-      // ======================= Header Buillding ======================= //
-      String httpVersion = ( request.getIsHttp10() ? "1.0" : "1.1" );
-      // Build the appropriate HTTP Status Line (1.1/1.0)
-      StringBuilder rStringBuilder = new StringBuilder(STRING_BUFFER_SIZE);
+        // ======================= Header Buillding ======================= //
+        String httpVersion = ( request.getIsHttp10() ? "1.0" : "1.1" );
+        // Build the appropriate HTTP Status Line (1.1/1.0)
+        StringBuilder rStringBuilder = new StringBuilder(STRING_BUFFER_SIZE);
 
-      String statusLine = "HTTP/" + httpVersion + " " + "200 OK" + "\r\n";
-      rStringBuilder.append( statusLine );
+        String statusLine = "HTTP/" + httpVersion + " " + "200 OK" + "\r\n";
+        rStringBuilder.append( statusLine );
 
-      String entityHeader = "Content-Length:" + " " + contentLength + "\r\n";
-      rStringBuilder.append( entityHeader );
+        String entityHeader = "Content-Length:" + " " + contentLength + "\r\n";
+        rStringBuilder.append( entityHeader );
 
-      rStringBuilder.append( "\r\n" );
+        rStringBuilder.append( "\r\n" );
 
-      // something feels iffy about this..
-      return concatenate( rStringBuilder.toString().getBytes(), encoded );
+        // something feels iffy about this..
+        return concatenate( rStringBuilder.toString().getBytes(), encoded ); 
+      } catch (IOException E ){
+        System.out.println("Bad request: 404 file not found -- too lazy to implement properly");
+        return null;
+
+      }
+
     }
     
 
@@ -211,11 +234,14 @@ class HttpRequest {
     // Feel free to add more attributes if needed.
     private String filePath;
     private Boolean isHttp10;
+    private Boolean isValid;
+    private static Pattern rLinePattern =
+      Pattern.compile("\\s*GET\\s+\\/(.+?)\\s+HTTP\\/(1\\.1|1\\.0)$");
     // host not necessary since we use an absolute path *relative* to 
     // the cwd of the Web Server.
 
     public HttpRequest(BufferedReader bReader) throws IOException {
-      System.out.println(this.parseRequest(bReader));
+      this.parseRequest(bReader);
     }
 
     String getFilePath() {
@@ -224,45 +250,52 @@ class HttpRequest {
     Boolean getIsHttp10() {
         return isHttp10;
     }
+    Boolean getIsValid() {
+        return isValid;
+    }
 
     /**
      * takes a bufferedreader as an http request and 
-     * parses  it. Returns appropriate code for parsing result
-     * -1 : non valid http 
-     *  1 : Parsed valid http
+     * parses  it. Updates buffer so it's ready for the next request 
      *@param buffered Reader
      *
      */
-    private int parseRequest( BufferedReader bReader ) throws IOException {
-
-      // parse header line  using regex
+    private void parseRequest( BufferedReader bReader ) throws IOException {
       String requestLine = bReader.readLine();
-
-      Pattern rLinePattern = Pattern.compile("\\s*GET\\s+\\/(.+?)\\s+HTTP\\/(1\\.1|1\\.0)$");
-      Matcher rLineMatcher = rLinePattern.matcher(requestLine);
-
-      // should find 3 matching groups for valid HTTP
-      rLineMatcher.find();
-      if( rLineMatcher.groupCount() != 2 ){
-        System.out.println( "No sufficient match, groupCount = " + rLineMatcher.groupCount() );
-        for(int i = 0; i < rLineMatcher.groupCount(); i++ ){
-          System.out.println( rLineMatcher.group(i) );
-        }
-        return -1;
-
-      } else {
-        this.filePath = rLineMatcher.group(1);
-        this.isHttp10 = ( rLineMatcher.group(2).equals("1.0") );
-        return 1;
+      if( requestLine == null){
+        this.isValid = false;
+        return;
       }
 
-      // we can actually just ignore all header lines after reading them,
-      // (assume 200 OK always)
-      // but they should still be read
-        // read until end of buffer
-        // int c;
-        // while( (c = bReader.read()) != -1 );
+      Matcher rLineMatcher = rLinePattern.matcher(requestLine);
+      // should find 3 matching groups for valid HTTP
+      
+      if( rLineMatcher.matches() && rLineMatcher.groupCount() == 2 ){
+        this.filePath = rLineMatcher.group(1);
+        this.isHttp10 = ( rLineMatcher.group(2).equals("1.0") );
 
+        System.out.println( requestLine );
+        this.readBufferToEnd( bReader );
+        this.isValid = true;
+      } else {
+        System.out.println( "Invalid Request Headers" );
+        this.readBufferToEnd( bReader );
+        this.isValid = false;
+      }
+    }
+
+    private void readBufferToEnd( BufferedReader bReader ) throws IOException {
+      if( this.isHttp10 ){
+        System.out.println("HTTP/1.0 Request - Ending socket Connection...");
+        // discard the rest of the request
+        // actually this isn't even necessary since we create a new connection
+      } else {
+        // only discard until the beginning of next request.
+        System.out.println("HTTP/1.1 Request - Preparing to read next request from socket connection");
+        String s;
+        while ( !(( s = bReader.readLine() ).trim().equals("")) );
+        System.out.println("HTTP/1.1 Request - Buffer ready for next request!");
+      }
     }
     // NEEDS IMPLEMENTATION
     // If you add more private variables, add your getter methods here
