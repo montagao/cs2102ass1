@@ -128,18 +128,27 @@ public class WebServer {
         sendHttpResponse( client, response);
         client.close();
       } else {
+        long timeStarted = System.currentTimeMillis();
         do {
           // TODO: send asynchronously with new thread.
-          byte[] response = formHttpResponse(httpRequest);
-          if( response == null ){
-            System.out.println( "Something went wrong, either the request requested an "
-              + "invalid resource or we couldn't form the response" );
-            break;
+          // System.out.println("Here");
+          if( httpRequest.getIsValid() ){
+            System.out.println("Valid request for " + httpRequest.getFilePath() + " found.");
+            byte[] response = formHttpResponse(httpRequest);
+            if( response == null ){
+              System.out.println( "Something went wrong, either the request requested an "
+                + "invalid resource or we couldn't form the response" );
+              break;
+            }
+            System.out.println("Finished forming http response");
+            sendHttpResponse( client, response);
+          } else {
+            // System.out.println("Invalid request/ no request.");
           }
+        // bad polling
+        } while( (httpRequest = new HttpRequest(bReader)).getIsValid() ||
+         System.currentTimeMillis() < (timeStarted + 2000)) ;
 
-          System.out.println("Finished forming http response");
-          sendHttpResponse( client, response);
-        } while( (httpRequest = new HttpRequest(bReader)).getIsValid() );
         client.close();
       }
     }
@@ -292,8 +301,9 @@ class HttpRequest {
       } else {
         // only discard until the beginning of next request.
         System.out.println("HTTP/1.1 Request - Preparing to read next request from socket connection");
-        String s;
-        while ( !(( s = bReader.readLine() ).trim().equals("")) );
+        String s = "";
+        // Matcher rLineMatcher = rLinePattern.matcher(s);
+        while ( !(( s = bReader.readLine() ).trim().equals("")) /* && !rLineMatcher.matches() */ );
         System.out.println("HTTP/1.1 Request - Buffer ready for next request!");
       }
     }
